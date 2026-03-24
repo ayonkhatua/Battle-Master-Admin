@@ -183,14 +183,15 @@ class _CoinAddScreenState extends State<CoinAddScreen> {
                         keyboardType: TextInputType.number,
                         validator: (v) {
                           if (v!.isEmpty) return 'Amount is required';
-                          if (int.tryParse(v) == null || int.parse(v) <= 0)
+                          if (int.tryParse(v) == null || int.parse(v) <= 0) {
                             return 'Must be a positive integer';
+                          }
                           return null;
                         },
                       ),
                       const SizedBox(height: 16),
                       DropdownButtonFormField<String>(
-                        value: _selectedBucket,
+                        initialValue: _selectedBucket,
                         dropdownColor: const Color(0xFF2A2A2A),
                         style: const TextStyle(color: Colors.white),
                         decoration: InputDecoration(

@@ -382,6 +382,7 @@ class _ManageTournamentScreenState extends State<ManageTournamentScreen> {
             Row(
               children: [
                 Expanded(
+                  flex: 3,
                   child: TextField(
                     controller: _roomIdController,
                     style: const TextStyle(color: Colors.white),
@@ -410,6 +411,7 @@ class _ManageTournamentScreenState extends State<ManageTournamentScreen> {
                 ),
                 const SizedBox(width: 16),
                 Expanded(
+                  flex: 2,
                   child: TextField(
                     controller: _roomPassController,
                     style: const TextStyle(color: Colors.white),
@@ -433,26 +435,29 @@ class _ManageTournamentScreenState extends State<ManageTournamentScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 16),
-                SizedBox(
-                  height: 56, // matches general text field height
-                  child: ElevatedButton.icon(
-                    onPressed: _isLoading ? null : _setRoomDetails,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red[800],
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    icon: const Icon(Icons.update),
-                    label: const Text(
-                      'UPDATE ROOM',
-                      style: TextStyle(fontWeight: FontWeight.bold),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerRight,
+              child: SizedBox(
+                height: 56, // matches general text field height
+                child: ElevatedButton.icon(
+                  onPressed: _isLoading ? null : _setRoomDetails,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red[800],
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
                   ),
+                  icon: const Icon(Icons.update),
+                  label: const Text(
+                    'UPDATE ROOM',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                 ),
-              ],
+              ),
             ),
           ],
         ),

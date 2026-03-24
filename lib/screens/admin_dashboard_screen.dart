@@ -4,7 +4,9 @@ import 'package:battle_master_admin/screens/create_tournament_screen.dart';
 import 'package:battle_master_admin/screens/delete_tournament_screen.dart';
 import 'package:battle_master_admin/screens/manage_tournament_screen.dart';
 import 'package:battle_master_admin/screens/payment_requests_screen.dart';
+import 'package:battle_master_admin/admin_settings_page.dart';
 import 'package:flutter/material.dart';
+import 'package:battle_master_admin/screens/admin_contact_us_screen.dart';
 
 // ... (DashboardHomeWidget wahi rahega)
 class DashboardHomeWidget extends StatelessWidget {
@@ -34,6 +36,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     CoinAddScreen(), // 4
     PaymentRequestsScreen(), // 5 (Naya)
     AdminUsersScreen(), // 6
+    AdminSettingsPage(), // 7 (Settings)
+    const AdminContactUsScreen(), // 8 (Contact Us)
   ];
 
   @override
@@ -96,6 +100,16 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   icon: Icon(Icons.group_outlined),
                   selectedIcon: Icon(Icons.group),
                   label: Text('Users'),
+                ),
+                NavigationRailDestination(
+                  icon: Icon(Icons.settings_outlined),
+                  selectedIcon: Icon(Icons.settings),
+                  label: Text('Settings'),
+                ),
+                NavigationRailDestination(
+                  icon: Icon(Icons.contact_support_outlined),
+                  selectedIcon: Icon(Icons.contact_support),
+                  label: Text('Contact Us'),
                 ),
               ],
             ),

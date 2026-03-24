@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -13,34 +14,29 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   String _searchQuery = '';
   final ValueNotifier<int> _userListRefresher = ValueNotifier<int>(0);
   late final RealtimeChannel _channel;
+  Timer? _debounce;
 
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(() {
-      if (_searchController.text.isEmpty && _searchQuery.isNotEmpty) {
-        setState(() {
-          _searchQuery = '';
-          _userListRefresher.value++;
-        });
-      }
-    });
 
     // Realtime Listener: Automatically refresh on database changes
     _channel = Supabase.instance.client
         .channel('public:users')
         .onPostgresChanges(
-            event: PostgresChangeEvent.all,
-            schema: 'public',
-            table: 'users',
-            callback: (payload) {
-              _userListRefresher.value++;
-            })
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'users',
+          callback: (payload) {
+            _userListRefresher.value++;
+          },
+        )
         .subscribe();
   }
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _searchController.dispose();
     _userListRefresher.dispose();
     Supabase.instance.client.removeChannel(_channel);
@@ -53,7 +49,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     if (_searchQuery.isNotEmpty) {
       // Fix: Correct Supabase `.or` syntax
       queryBuilder = queryBuilder.or(
-        'username.ilike.%$_searchQuery%,mobile.ilike.%$_searchQuery%,email.ilike.%$_searchQuery%'
+        'username.ilike.%$_searchQuery%,mobile.ilike.%$_searchQuery%,email.ilike.%$_searchQuery%',
       );
     }
 
@@ -65,32 +61,39 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     try {
       await Supabase.instance.client
           .from('users')
-          .update({'status': newStatus}).eq('id', userId);
-          
+          .update({'status': newStatus})
+          .eq('id', userId);
+
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('✅ User status updated successfully!'),
-          backgroundColor: Colors.green,
-        ));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('✅ User status updated successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
       }
     } catch (e) {
       final errorMsg = e is PostgrestException ? e.message : e.toString();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('Error: $errorMsg'),
-          backgroundColor: Colors.red,
-        ));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $errorMsg'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     }
     _userListRefresher.value++;
   }
 
-  void _onSearch() {
-    setState(() {
-      _searchQuery = _searchController.text.trim();
-      _userListRefresher.value++;
+  void _onSearchChanged(String query) {
+    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () {
+      setState(() {
+        _searchQuery = query.trim();
+        _userListRefresher.value++;
+      });
     });
-    FocusScope.of(context).unfocus();
   }
 
   @override
@@ -105,16 +108,18 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
             Text(
               '👥 Manage Users',
               style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                  ),
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 24),
-            
+
             // --- Search Section ---
             Card(
               color: const Color(0xFF1E1E1E),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Row(
@@ -128,7 +133,10 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                           hintText: 'Search by username, email, or mobile...',
                           labelStyle: const TextStyle(color: Colors.grey),
                           hintStyle: const TextStyle(color: Colors.grey),
-                          prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                          prefixIcon: const Icon(
+                            Icons.search,
+                            color: Colors.grey,
+                          ),
                           filled: true,
                           fillColor: const Color(0xFF2A2A2A),
                           border: OutlineInputBorder(
@@ -137,27 +145,13 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
-                            borderSide: const BorderSide(color: Colors.red, width: 2),
+                            borderSide: const BorderSide(
+                              color: Colors.red,
+                              width: 2,
+                            ),
                           ),
                         ),
-                        onSubmitted: (_) => _onSearch(),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    SizedBox(
-                      height: 56, // Match TextField height
-                      child: ElevatedButton.icon(
-                        onPressed: _onSearch,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red[800],
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          padding: const EdgeInsets.symmetric(horizontal: 24),
-                        ),
-                        icon: const Icon(Icons.search),
-                        label: const Text('SEARCH', style: TextStyle(fontWeight: FontWeight.bold)),
+                        onChanged: _onSearchChanged,
                       ),
                     ),
                   ],
@@ -167,56 +161,66 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
             const SizedBox(height: 24),
 
             // --- User List ---
-          Expanded(
-            child: ValueListenableBuilder<int>(
-              valueListenable: _userListRefresher,
-              builder: (context, _, __) {
-                return FutureBuilder<List<Map<String, dynamic>>>(
-                  future: _fetchUsers(),
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator(color: Colors.red));
-                    }
-                    if (snapshot.hasError) {
-                      return Center(
-                        child: Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.redAccent)),
-                      );
-                    }
-                    if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                      return const Center(
-                        child: Text('No users found.', style: TextStyle(color: Colors.grey, fontSize: 18)),
-                      );
-                    }
+            Expanded(
+              child: ValueListenableBuilder<int>(
+                valueListenable: _userListRefresher,
+                builder: (context, _, __) {
+                  return FutureBuilder<List<Map<String, dynamic>>>(
+                    future: _fetchUsers(),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(
+                          child: CircularProgressIndicator(color: Colors.red),
+                        );
+                      }
+                      if (snapshot.hasError) {
+                        return Center(
+                          child: Text(
+                            'Error: ${snapshot.error}',
+                            style: const TextStyle(color: Colors.redAccent),
+                          ),
+                        );
+                      }
+                      if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                        return const Center(
+                          child: Text(
+                            'No users found.',
+                            style: TextStyle(color: Colors.grey, fontSize: 18),
+                          ),
+                        );
+                      }
 
-                    final users = snapshot.data!;
-                    return ListView.builder(
-                      itemCount: users.length,
-                      itemBuilder: (context, index) {
-                        final user = users[index];
-                        final bool isActive = user['status'] == 'active';
-                        final wallet = user['wallet_balance'] ?? 0;
+                      final users = snapshot.data!;
+                      return ListView.builder(
+                        itemCount: users.length,
+                        itemBuilder: (context, index) {
+                          final user = users[index];
+                          final bool isActive = user['status'] == 'active';
+                          final wallet = user['wallet_balance'] ?? 0;
 
-                        return _buildUserCard(user, isActive, wallet);
-                      },
-                    );
-                  },
-                );
-              },
+                          return _buildUserCard(user, isActive, wallet);
+                        },
+                      );
+                    },
+                  );
+                },
+              ),
             ),
-          ),
-        ],
-      ),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildUserCard(Map<String, dynamic> user, bool isActive, dynamic wallet) {
+  Widget _buildUserCard(
+    Map<String, dynamic> user,
+    bool isActive,
+    dynamic wallet,
+  ) {
     return Card(
       color: const Color(0xFF1E1E1E),
       margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Row(
@@ -224,7 +228,11 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
             CircleAvatar(
               backgroundColor: Colors.red[900]?.withOpacity(0.3),
               radius: 28,
-              child: const Icon(Icons.person, color: Colors.redAccent, size: 32),
+              child: const Icon(
+                Icons.person,
+                color: Colors.redAccent,
+                size: 32,
+              ),
             ),
             const SizedBox(width: 16),
             Expanded(
@@ -233,7 +241,11 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                 children: [
                   Text(
                     user['username'] ?? 'No Username',
-                    style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -243,7 +255,10 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                   const SizedBox(height: 4),
                   Text(
                     'IGN: ${user['ign'] ?? 'N/A'} | Wallet: $wallet 🪙',
-                    style: const TextStyle(color: Colors.amberAccent, fontSize: 14),
+                    style: const TextStyle(
+                      color: Colors.amberAccent,
+                      fontSize: 14,
+                    ),
                   ),
                 ],
               ),
@@ -251,37 +266,34 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: isActive ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
+                ElevatedButton(
+                  onPressed: () => _updateUserStatus(
+                    user['id'],
+                    isActive ? 'blocked' : 'active',
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isActive
+                        ? Colors.green.withOpacity(0.1)
+                        : Colors.red.withOpacity(0.1),
+                    foregroundColor: isActive
+                        ? Colors.greenAccent
+                        : Colors.redAccent,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    side: BorderSide(
                       color: isActive ? Colors.green : Colors.red,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
                     ),
                   ),
                   child: Text(
                     isActive ? 'ACTIVE' : 'BLOCKED',
-                    style: TextStyle(
-                      color: isActive ? Colors.greenAccent : Colors.redAccent,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12,
-                    ),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
-                ),
-                const SizedBox(height: 12),
-                ElevatedButton.icon(
-                  onPressed: () => _updateUserStatus(user['id'], isActive ? 'blocked' : 'active'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: isActive ? Colors.red[800] : Colors.green[700],
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  ),
-                  icon: Icon(isActive ? Icons.block : Icons.check_circle_outline, size: 18),
-                  label: Text(isActive ? 'BLOCK USER' : 'ACTIVATE USER'),
                 ),
               ],
             ),
