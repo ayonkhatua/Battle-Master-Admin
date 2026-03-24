@@ -65,12 +65,28 @@ class _AdminContactUsScreenState extends State<AdminContactUsScreen> {
     });
 
     try {
-      // Upsert ensures that if id=1 doesn't exist, it creates it,
-      // otherwise it just updates the contact_us_link column.
-      await Supabase.instance.client.from('app_config').upsert({
-        'id': 1,
-        'contact_us_link': _linkController.text.trim(),
-      });
+      final link = _linkController.text.trim();
+      
+      // Pehle check karte hain ki database me app_config ki row majood hai ya nahi
+      final existingData = await Supabase.instance.client
+          .from('app_config')
+          .select('id')
+          .eq('id', 1)
+          .maybeSingle();
+
+      if (existingData == null) {
+        // Agar row nahi hai toh naya insert karenge
+        await Supabase.instance.client.from('app_config').insert({
+          'id': 1,
+          'contact_us_link': link,
+        });
+      } else {
+        // Agar row already hai toh sirf update karenge
+        await Supabase.instance.client
+            .from('app_config')
+            .update({'contact_us_link': link})
+            .eq('id', 1);
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
