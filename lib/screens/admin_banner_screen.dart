@@ -67,9 +67,9 @@ class _AdminBannerScreenState extends State<AdminBannerScreen> {
           'banner_${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
       final filePath = 'uploads/$fileName';
 
-      // Uploading binary data to Supabase Storage bucket named 'banners'
+      // Uploading binary data to Supabase Storage bucket
       await Supabase.instance.client.storage
-          .from('banners')
+          .from('Battle Master Banner')
           .uploadBinary(
             filePath,
             _selectedImageBytes!,
@@ -79,8 +79,16 @@ class _AdminBannerScreenState extends State<AdminBannerScreen> {
             ),
           );
 
-      // (Optional) Get public URL if you want to save it in database
-      // final imageUrl = Supabase.instance.client.storage.from('banners').getPublicUrl(filePath);
+      // Get public URL to save it in database
+      final imageUrl = Supabase.instance.client.storage
+          .from('Battle Master Banner')
+          .getPublicUrl(filePath);
+
+      // Insert new banner record into app_banners table
+      await Supabase.instance.client.from('app_banners').insert({
+        'image_url': imageUrl,
+        'is_active': true,
+      });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
