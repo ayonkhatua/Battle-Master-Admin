@@ -23,33 +23,49 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
       _isLoading = true;
     });
 
-    // Hardcoded Authentication Logic (Temporary)
-    await Future.delayed(const Duration(seconds: 1)); // Mock loading delay
+    try {
+      final email = _emailController.text.trim();
+      final password = _passwordController.text;
 
-    if (!mounted) return;
+      // Step 1: Check if the entered email is the authorized admin email
+      final config = await Supabase.instance.client
+          .from('app_config')
+          .select('admin_email')
+          .eq('id', 1)
+          .maybeSingle();
 
-    if (_emailController.text.trim() == 'admin' &&
-        _passwordController.text.trim() == 'password') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Login Successful!'),
-          backgroundColor: Colors.green,
-        ),
+      if (config == null || config['admin_email'] == null) {
+        throw 'Admin configuration not found or admin email not set.';
+      }
+
+      final adminEmail = config['admin_email'] as String;
+
+      if (email.toLowerCase() != adminEmail.toLowerCase()) {
+        throw 'Unauthorized Access! Only the registered admin can login.';
+      }
+
+      // Step 2: Authenticate using Supabase Auth (User must exist in Auth)
+      await Supabase.instance.client.auth.signInWithPassword(
+        email: email,
+        password: password,
       );
-      // TODO: Navigate to Admin Dashboard
-       Navigator.pushReplacementNamed(context, '/admin_dashboard_screen');
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Invalid username or password!'),
-          backgroundColor: Colors.red,
-        ),
-      );
+
+      if (!mounted) return;
+      Navigator.pushReplacementNamed(context, '/admin_dashboard_screen');
+    } catch (e) {
+      final errorMessage = e is AuthException ? e.message : e.toString();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(errorMessage), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
     }
-
-    setState(() {
-      _isLoading = false;
-    });
   }
 
   @override
@@ -101,10 +117,10 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                         controller: _emailController,
                         style: const TextStyle(color: Colors.white),
                         decoration: InputDecoration(
-                          labelText: 'Username',
+                          labelText: 'Email',
                           labelStyle: const TextStyle(color: Colors.grey),
                           prefixIcon: const Icon(
-                            Icons.person_outline,
+                            Icons.email_outlined,
                             color: Colors.grey,
                           ),
                           filled: true,
@@ -121,9 +137,8 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                             ),
                           ),
                         ),
-                        validator: (value) => value!.isEmpty
-                            ? 'Please enter your username'
-                            : null,
+                        validator: (value) =>
+                            value!.isEmpty ? 'Please enter your email' : null,
                       ),
                       const SizedBox(height: 20),
                       TextFormField(
