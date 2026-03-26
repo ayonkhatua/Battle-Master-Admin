@@ -8,18 +8,16 @@ class ParticipantState {
   bool isWinner;
 
   ParticipantState(this.participantData)
-    : killsController = TextEditingController(
-        text: (participantData['kills'] ?? 0).toString(),
-      ),
-      coinsController = TextEditingController(
-        text: (participantData['coins_won'] ?? 0).toString(),
-      ),
+    : killsController = TextEditingController(text: '0'),
+      coinsController = TextEditingController(text: '0'),
       isWinner = false;
 
+  // FIX: user_tournaments se user_ign fetch karna
   String get ign =>
-      participantData['users']?['ign'] ?? participantData['ign'] ?? 'N/A';
-  int get joinId => participantData['id'];
-  int get userId => participantData['user_id'];
+      participantData['user_ign'] ?? participantData['users']?['ign'] ?? 'N/A';
+
+  // FIX: user_id String (UUID) hi hona chahiye
+  String get userId => participantData['user_id'].toString();
 }
 
 class ManageTournamentScreen extends StatefulWidget {
@@ -42,7 +40,7 @@ class _ManageTournamentScreenState extends State<ManageTournamentScreen> {
   Future<void> _loadTournament() async {
     final tid = int.tryParse(_searchController.text);
     if (tid == null) {
-      setState(() => _message = "⚠️ Please enter a valid Tournament ID.");
+      setState(() => _message = "⚠️ Enter valid ID");
       return;
     }
 
@@ -59,20 +57,23 @@ class _ManageTournamentScreenState extends State<ManageTournamentScreen> {
           .select()
           .eq('id', tid)
           .single();
+
+      // Fetching user_tournaments along with user ign
       final pResponse = await Supabase.instance.client
           .from('user_tournaments')
           .select('*, users(ign)')
-          .eq('tournament_id', tid)
-          .order('id', ascending: true);
+          .eq('tournament_id', tid);
 
       setState(() {
         _tournament = tResponse;
-        _participants = pResponse.map((p) => ParticipantState(p)).toList();
+        _participants = (pResponse as List)
+            .map((p) => ParticipantState(p))
+            .toList();
         _roomIdController.text = _tournament!['room_id'] ?? '';
         _roomPassController.text = _tournament!['room_password'] ?? '';
       });
     } catch (e) {
-      setState(() => _message = "❌ Error loading tournament: ${e.toString()}");
+      setState(() => _message = "❌ Error: $e");
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -102,6 +103,7 @@ class _ManageTournamentScreenState extends State<ManageTournamentScreen> {
     }
   }
 
+  // --- FIXED SAVE LOGIC ---
   Future<void> _saveResults() async {
     if (_tournament == null) return;
     final tid = _tournament!['id'];
@@ -111,25 +113,24 @@ class _ManageTournamentScreenState extends State<ManageTournamentScreen> {
     });
 
     try {
-      // Step 1: Upsert results for all participants
+      // Step 1: Upsert results using game_results table
       final resultsToUpsert = _participants
           .map(
             (p) => {
               'tournament_id': tid,
-              'participant_id': p.userId,
-              'ign': p.ign,
+              'user_id': p.userId, // UUID
               'kills': int.tryParse(p.killsController.text) ?? 0,
-              'won': int.tryParse(p.coinsController.text) ?? 0,
-              'winner': p.isWinner ? 1 : 0,
+              'winnings': int.tryParse(p.coinsController.text) ?? 0,
+              'is_winner': p.isWinner, // New column added via SQL
             },
           )
           .toList();
 
       await Supabase.instance.client
-          .from('results')
+          .from('game_results')
           .upsert(
             resultsToUpsert,
-            onConflict: 'tournament_id, participant_id, ign',
+            onConflict: 'tournament_id, user_id',
           );
 
       // Step 2: Update tournament status and winner names
@@ -148,7 +149,7 @@ class _ManageTournamentScreenState extends State<ManageTournamentScreen> {
           })
           .eq('id', tid);
 
-      // Step 3: Calculate and upsert statistics (PHP logic)
+      // Step 3: Calculate and upsert statistics
       await _updateStatistics(tid);
 
       setState(
@@ -165,47 +166,23 @@ class _ManageTournamentScreenState extends State<ManageTournamentScreen> {
     }
   }
 
-  // PHP code se statistics update karne wali logic
+  // --- FIXED STATISTICS LOGIC ---
   Future<void> _updateStatistics(int tid) async {
     final entryFeeString = _tournament!['entry_fee']?.toString() ?? '0';
     final entryFee =
         double.tryParse(entryFeeString.replaceAll(RegExp(r'[^0-9.]'), '')) ??
         0.0;
     final title = _tournament!['title'];
-    final startTime = _tournament!['time'];
 
-    // Fetch results data to aggregate
-    final resultsData = await Supabase.instance.client
-        .from('results')
-        .select('participant_id, won')
-        .eq('tournament_id', tid);
-
-    // Group by user_id in Dart
-    final Map<int, Map<String, dynamic>> userStats = {};
-    for (var row in resultsData) {
-      final userId = row['participant_id'] as int;
-      final won = (row['won'] ?? 0) as num;
-
-      if (userStats.containsKey(userId)) {
-        userStats[userId]!['ign_count'] += 1;
-        userStats[userId]!['total_won'] += won;
-      } else {
-        userStats[userId] = {'ign_count': 1, 'total_won': won.toDouble()};
-      }
-    }
-
-    // Prepare data for statistics upsert
-    final statsToUpsert = [];
-    userStats.forEach((userId, stats) {
-      statsToUpsert.add({
-        'user_id': userId,
+    final statsToUpsert = _participants.map((p) {
+      return {
+        'user_id': p.userId, // UUID
         'tournament_id': tid,
         'title': title,
-        'start_time': startTime,
-        'paid': entryFee * stats['ign_count'],
-        'won': stats['total_won'],
-      });
-    });
+        'paid': entryFee.toInt(),
+        'won': int.tryParse(p.coinsController.text) ?? 0,
+      };
+    }).toList();
 
     if (statsToUpsert.isNotEmpty) {
       await Supabase.instance.client
@@ -305,7 +282,7 @@ class _ManageTournamentScreenState extends State<ManageTournamentScreen> {
                 child: Text(
                   _message,
                   style: TextStyle(
-                    color: _message.startsWith('❌')
+                    color: _message.startsWith('❌') || _message.startsWith('⚠️')
                         ? Colors.redAccent
                         : Colors.greenAccent,
                     fontWeight: FontWeight.bold,
