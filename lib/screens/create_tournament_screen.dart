@@ -22,9 +22,11 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
   final _perKillController = TextEditingController();
   final _entryFeeController = TextEditingController();
   String? _type;
-  final _versionController = TextEditingController();
-  final _mapController = TextEditingController();
   final _slotsController = TextEditingController();
+
+  // 🌟 Naye Dropdown Variables 🌟
+  String? _version;
+  String? _map;
 
   // PHP code se liye gaye options
   final List<String> _modeOptions = [
@@ -39,6 +41,10 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
     'Grand Special',
   ];
   final List<String> _typeOptions = ['Solo', 'Duo', 'Squad'];
+  
+  // 🌟 Naye Dropdown Options 🌟
+  final List<String> _versionOptions = ['TPP']; // FPP add karna ho toh yahan likh dena
+  final List<String> _mapOptions = ['Bermuda', 'IRON CAGE'];
 
   Future<void> _selectDateTime() async {
     final date = await showDatePicker(
@@ -56,6 +62,7 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
     if (time == null) return;
 
     setState(() {
+      // User ka local time select hua
       _time = DateTime(date.year, date.month, date.day, time.hour, time.minute);
     });
   }
@@ -63,9 +70,9 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
   Future<void> _createTournament() async {
     if (_formKey.currentState!.validate()) {
       if (_time == null) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Please select a time.')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select a time.'))
+        );
         return;
       }
 
@@ -74,47 +81,53 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
       });
 
       try {
+        // 🌟 TIME FIX: Local time ko DB mein save karne se pehle UTC mein convert kiya 🌟
+        final utcTime = _time!.toUtc().toIso8601String();
+
         await Supabase.instance.client.from('tournaments').insert({
           'title': _titleController.text,
           'mode': _mode,
-          'time': _time!.toIso8601String(),
+          'time': utcTime, // Ab yahan UTC time jayega
           'image_url': _imageController.text,
           'prize_pool': _prizePoolController.text,
           'per_kill': _perKillController.text,
           'entry_fee': _entryFeeController.text,
           'type': _type,
-          'version': _versionController.text,
-          'map': _mapController.text,
+          'version': _version, // Text controller ki jagah ab variable use hoga
+          'map': _map,         // Text controller ki jagah ab variable use hoga
           'slots': int.parse(_slotsController.text),
-          'filled': 0, // PHP code ke mutabik
+          'filled': 0, 
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✅ Tournament created successfully in $_mode!'),
-          ),
-        );
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('✅ Tournament created successfully in $_mode!')),
+          );
+        }
+        
+        // Form Clear Logic
         _formKey.currentState!.reset();
         _titleController.clear();
         _imageController.clear();
         _prizePoolController.clear();
         _perKillController.clear();
         _entryFeeController.clear();
-        _versionController.clear();
-        _mapController.clear();
         _slotsController.clear();
         setState(() {
           _time = null;
           _mode = null;
           _type = null;
+          _version = null;
+          _map = null;
         });
       } on PostgrestException catch (e) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('❌ Error: ${e.message}')));
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('❌ Error: ${e.message}')));
+        }
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('❌ An unexpected error occurred: $e')),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('❌ An unexpected error occurred: $e')));
+        }
       } finally {
         if (mounted) {
           setState(() {
@@ -138,9 +151,7 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
             children: [
               Text(
                 'Create New Tournament',
-                style: Theme.of(
-                  context,
-                ).textTheme.headlineMedium?.copyWith(color: Colors.white),
+                style: Theme.of(context).textTheme.headlineMedium?.copyWith(color: Colors.white),
               ),
               const SizedBox(height: 24),
 
@@ -148,9 +159,7 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
                 initialValue: _mode,
                 hint: const Text('-- Select Mode --'),
                 decoration: const InputDecoration(labelText: 'Mode'),
-                items: _modeOptions
-                    .map((m) => DropdownMenuItem(value: m, child: Text(m)))
-                    .toList(),
+                items: _modeOptions.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
                 onChanged: (v) => setState(() => _mode = v),
                 validator: (v) => v == null ? 'Mode is required' : null,
               ),
@@ -170,6 +179,7 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
                   child: Text(
                     _time == null
                         ? 'Select Time'
+                        // Yahan user ko local time hi dikhega, DB mein bhejte waqt UTC hoga
                         : DateFormat('yyyy-MM-dd HH:mm').format(_time!),
                   ),
                 ),
@@ -185,6 +195,7 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
 
               TextFormField(
                 controller: _prizePoolController,
+                keyboardType: TextInputType.number,
                 decoration: const InputDecoration(labelText: 'Prize Pool'),
                 validator: (v) => v!.isEmpty ? 'Prize Pool is required' : null,
               ),
@@ -192,6 +203,7 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
 
               TextFormField(
                 controller: _perKillController,
+                keyboardType: TextInputType.number,
                 decoration: const InputDecoration(labelText: 'Per Kill'),
                 validator: (v) => v!.isEmpty ? 'Per Kill is required' : null,
               ),
@@ -199,6 +211,7 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
 
               TextFormField(
                 controller: _entryFeeController,
+                keyboardType: TextInputType.number,
                 decoration: const InputDecoration(labelText: 'Entry Fee'),
                 validator: (v) => v!.isEmpty ? 'Entry Fee is required' : null,
               ),
@@ -208,25 +221,31 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
                 initialValue: _type,
                 hint: const Text('-- Select Type --'),
                 decoration: const InputDecoration(labelText: 'Type'),
-                items: _typeOptions
-                    .map((t) => DropdownMenuItem(value: t, child: Text(t)))
-                    .toList(),
+                items: _typeOptions.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
                 onChanged: (v) => setState(() => _type = v),
                 validator: (v) => v == null ? 'Type is required' : null,
               ),
               const SizedBox(height: 16),
 
-              TextFormField(
-                controller: _versionController,
+              // 🌟 NAYA VERSION DROPDOWN 🌟
+              DropdownButtonFormField<String>(
+                initialValue: _version,
+                hint: const Text('-- Select Version --'),
                 decoration: const InputDecoration(labelText: 'Version'),
-                validator: (v) => v!.isEmpty ? 'Version is required' : null,
+                items: _versionOptions.map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
+                onChanged: (v) => setState(() => _version = v),
+                validator: (v) => v == null ? 'Version is required' : null,
               ),
               const SizedBox(height: 16),
 
-              TextFormField(
-                controller: _mapController,
+              // 🌟 NAYA MAP DROPDOWN 🌟
+              DropdownButtonFormField<String>(
+                initialValue: _map,
+                hint: const Text('-- Select Map --'),
                 decoration: const InputDecoration(labelText: 'Map'),
-                validator: (v) => v!.isEmpty ? 'Map is required' : null,
+                items: _mapOptions.map((m) => DropdownMenuItem(value: m, child: Text(m))).toList(),
+                onChanged: (v) => setState(() => _map = v),
+                validator: (v) => v == null ? 'Map is required' : null,
               ),
               const SizedBox(height: 16),
 
