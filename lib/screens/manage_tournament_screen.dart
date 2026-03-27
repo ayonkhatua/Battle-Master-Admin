@@ -12,11 +12,9 @@ class ParticipantState {
       coinsController = TextEditingController(text: '0'),
       isWinner = false;
 
-  // FIX: user_tournaments se user_ign fetch karna
   String get ign =>
       participantData['user_ign'] ?? participantData['users']?['ign'] ?? 'N/A';
 
-  // FIX: user_id String (UUID) hi hona chahiye
   String get userId => participantData['user_id'].toString();
 }
 
@@ -58,7 +56,6 @@ class _ManageTournamentScreenState extends State<ManageTournamentScreen> {
           .eq('id', tid)
           .single();
 
-      // Fetching user_tournaments along with user ign
       final pResponse = await Supabase.instance.client
           .from('user_tournaments')
           .select('*, users(ign)')
@@ -113,18 +110,35 @@ class _ManageTournamentScreenState extends State<ManageTournamentScreen> {
     });
 
     try {
-      // Step 1: Upsert results using game_results table
-      final resultsToUpsert = _participants
-          .map(
-            (p) => {
-              'tournament_id': tid,
-              'user_id': p.userId, // UUID
-              'kills': int.tryParse(p.killsController.text) ?? 0,
-              'winnings': int.tryParse(p.coinsController.text) ?? 0,
-              'is_winner': p.isWinner, // New column added via SQL
-            },
-          )
-          .toList();
+      // 🌟 MAGIC FIX: Consolidation (Jodna) Logic 🌟
+      // Agar ek user ke paas 2 slots hain, toh uske kills aur winnings ko jod do.
+      Map<String, Map<String, dynamic>> consolidatedResults = {};
+
+      for (var p in _participants) {
+        String uId = p.userId;
+        int currentKills = int.tryParse(p.killsController.text) ?? 0;
+        int currentCoins = int.tryParse(p.coinsController.text) ?? 0;
+        bool isWinner = p.isWinner;
+
+        if (consolidatedResults.containsKey(uId)) {
+          // Add to existing
+          consolidatedResults[uId]!['kills'] += currentKills;
+          consolidatedResults[uId]!['winnings'] += currentCoins;
+          if (isWinner) consolidatedResults[uId]!['is_winner'] = true;
+        } else {
+          // Create new
+          consolidatedResults[uId] = {
+            'tournament_id': tid,
+            'user_id': uId,
+            'kills': currentKills,
+            'winnings': currentCoins,
+            'is_winner': isWinner,
+          };
+        }
+      }
+
+      // Convert Map back to List for Upsert
+      final resultsToUpsert = consolidatedResults.values.toList();
 
       await Supabase.instance.client
           .from('game_results')
@@ -137,6 +151,7 @@ class _ManageTournamentScreenState extends State<ManageTournamentScreen> {
       final winners = _participants
           .where((p) => p.isWinner)
           .map((p) => p.ign)
+          .toSet() // Removes duplicate names if same user won multiple slots
           .toList();
       final winnerNames = winners.join(", ");
 
@@ -150,7 +165,7 @@ class _ManageTournamentScreenState extends State<ManageTournamentScreen> {
           .eq('id', tid);
 
       // Step 3: Calculate and upsert statistics
-      await _updateStatistics(tid);
+      await _updateStatistics(tid, consolidatedResults);
 
       setState(
         () => _message = "🏆 Results saved successfully! Winners: $winnerNames",
@@ -167,20 +182,20 @@ class _ManageTournamentScreenState extends State<ManageTournamentScreen> {
   }
 
   // --- FIXED STATISTICS LOGIC ---
-  Future<void> _updateStatistics(int tid) async {
+  Future<void> _updateStatistics(int tid, Map<String, Map<String, dynamic>> consolidatedResults) async {
     final entryFeeString = _tournament!['entry_fee']?.toString() ?? '0';
     final entryFee =
         double.tryParse(entryFeeString.replaceAll(RegExp(r'[^0-9.]'), '')) ??
         0.0;
     final title = _tournament!['title'];
 
-    final statsToUpsert = _participants.map((p) {
+    final statsToUpsert = consolidatedResults.values.map((res) {
       return {
-        'user_id': p.userId, // UUID
+        'user_id': res['user_id'], // UUID
         'tournament_id': tid,
         'title': title,
-        'paid': entryFee.toInt(),
-        'won': int.tryParse(p.coinsController.text) ?? 0,
+        'paid': entryFee.toInt(), // Assuming fee is paid per user, not per slot. Adjust if needed.
+        'won': res['winnings'], // Total coins won combined
       };
     }).toList();
 
