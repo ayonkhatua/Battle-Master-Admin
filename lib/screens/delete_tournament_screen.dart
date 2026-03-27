@@ -36,7 +36,7 @@ class _DeleteTournamentScreenState extends State<DeleteTournamentScreen> {
           ],
         ),
         content: Text(
-          'Are you sure you want to delete Tournament #$tid?\n\nThis action cannot be undone.',
+          'Are you sure you want to delete Tournament #$tid?\n\nThis action cannot be undone and will delete all joined users and results.',
           style: const TextStyle(color: Colors.grey),
         ),
         actions: [
@@ -63,7 +63,7 @@ class _DeleteTournamentScreenState extends State<DeleteTournamentScreen> {
     });
 
     try {
-      // First, check if tournament exists
+      // 1. First, check if tournament exists
       final tournament = await Supabase.instance.client
           .from('tournaments')
           .select('id, title')
@@ -78,34 +78,46 @@ class _DeleteTournamentScreenState extends State<DeleteTournamentScreen> {
         return;
       }
 
-      // If using cascading deletes in Supabase, this next step is not needed.
-      // But for safety, we do it, just like the PHP code.
+      // 🌟 PROPER DELETION ORDER (Child tables first) 🌟
+      
+      // 2. Delete Temporary Slot Locks
       await Supabase.instance.client
-          .from('user_tournaments')
+          .from('slot_locks')
           .delete()
           .eq('tournament_id', tid);
 
-      // Also delete from results and statistics
+      // 3. Delete Game Results (Naya table name)
       await Supabase.instance.client
-          .from('results')
+          .from('game_results')
           .delete()
           .eq('tournament_id', tid);
+
+      // 4. Delete Statistics
       await Supabase.instance.client
           .from('statistics')
           .delete()
           .eq('tournament_id', tid);
 
-      // Finally, delete the tournament itself
-      await Supabase.instance.client.from('tournaments').delete().eq('id', tid);
+      // 5. Delete Joined Users (user_tournaments)
+      await Supabase.instance.client
+          .from('user_tournaments')
+          .delete()
+          .eq('tournament_id', tid);
+
+      // 6. FINALLY, Delete the Main Tournament
+      await Supabase.instance.client
+          .from('tournaments')
+          .delete()
+          .eq('id', tid);
 
       setState(() {
-        _message =
-            "✅ Tournament #$tid (${tournament['title']}) and all its data deleted successfully!";
+        _message = "✅ Tournament #$tid (${tournament['title']}) and all its data deleted successfully!";
         _tidController.clear();
       });
+
     } on PostgrestException catch (e) {
       setState(() {
-        _message = '❌ Error: ${e.message}';
+        _message = '❌ Database Error: ${e.message}';
       });
     } catch (e) {
       setState(() {
@@ -130,25 +142,18 @@ class _DeleteTournamentScreenState extends State<DeleteTournamentScreen> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 500),
             child: Card(
-              color: const Color(0xFF1E1E1E), // Blueprint Card Color
+              color: const Color(0xFF1E1E1E), 
               elevation: 8,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
-                side: const BorderSide(
-                  color: Colors.redAccent,
-                  width: 1,
-                ), // Subtle warning border
+                side: const BorderSide(color: Colors.redAccent, width: 1), 
               ),
               child: Padding(
                 padding: const EdgeInsets.all(32.0),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(
-                      Icons.warning_amber_rounded,
-                      size: 64,
-                      color: Colors.redAccent,
-                    ),
+                    const Icon(Icons.warning_amber_rounded, size: 64, color: Colors.redAccent),
                     const SizedBox(height: 16),
                     Text(
                       'DELETE TOURNAMENT',
@@ -160,7 +165,7 @@ class _DeleteTournamentScreenState extends State<DeleteTournamentScreen> {
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'This action is irreversible. All associated data (participants, results, statistics) will be permanently deleted.',
+                      'This action is irreversible. All associated data will be permanently deleted.',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: Colors.grey, fontSize: 14),
                     ),
@@ -170,12 +175,9 @@ class _DeleteTournamentScreenState extends State<DeleteTournamentScreen> {
                       keyboardType: TextInputType.number,
                       style: const TextStyle(color: Colors.white),
                       decoration: InputDecoration(
-                        labelText: 'Tournament ID',
+                        labelText: 'Tournament ID (e.g., 1)',
                         labelStyle: const TextStyle(color: Colors.grey),
-                        prefixIcon: const Icon(
-                          Icons.numbers,
-                          color: Colors.grey,
-                        ),
+                        prefixIcon: const Icon(Icons.numbers, color: Colors.grey),
                         filled: true,
                         fillColor: const Color(0xFF2A2A2A),
                         border: OutlineInputBorder(
@@ -184,10 +186,7 @@ class _DeleteTournamentScreenState extends State<DeleteTournamentScreen> {
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(
-                            color: Colors.red,
-                            width: 2,
-                          ),
+                          borderSide: const BorderSide(color: Colors.red, width: 2),
                         ),
                       ),
                     ),
@@ -203,19 +202,13 @@ class _DeleteTournamentScreenState extends State<DeleteTournamentScreen> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.red[800],
                             foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                             elevation: 5,
                           ),
                           icon: const Icon(Icons.delete_forever),
                           label: const Text(
                             'PERMANENTLY DELETE',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 1,
-                            ),
+                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1),
                           ),
                         ),
                       ),
@@ -224,36 +217,18 @@ class _DeleteTournamentScreenState extends State<DeleteTournamentScreen> {
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: _message.startsWith('✅')
-                              ? Colors.green.withOpacity(0.1)
-                              : Colors.red.withOpacity(0.1),
+                          color: _message.startsWith('✅') ? Colors.green.withOpacity(0.1) : Colors.red.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: _message.startsWith('✅')
-                                ? Colors.green
-                                : Colors.red,
-                          ),
+                          border: Border.all(color: _message.startsWith('✅') ? Colors.green : Colors.red),
                         ),
                         child: Row(
                           children: [
-                            Icon(
-                              _message.startsWith('✅')
-                                  ? Icons.check_circle
-                                  : Icons.error,
-                              color: _message.startsWith('✅')
-                                  ? Colors.green
-                                  : Colors.red,
-                            ),
+                            Icon(_message.startsWith('✅') ? Icons.check_circle : Icons.error, color: _message.startsWith('✅') ? Colors.green : Colors.red),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Text(
                                 _message,
-                                style: TextStyle(
-                                  color: _message.startsWith('✅')
-                                      ? Colors.greenAccent
-                                      : Colors.redAccent,
-                                  fontWeight: FontWeight.w500,
-                                ),
+                                style: TextStyle(color: _message.startsWith('✅') ? Colors.greenAccent : Colors.redAccent, fontWeight: FontWeight.w500),
                               ),
                             ),
                           ],

@@ -503,7 +503,7 @@ class _AdminBannerScreenState extends State<AdminBannerScreen> {
                       children: [
                         Switch(
                           value: isActive,
-                          activeColor: Colors.green,
+                          activeThumbColor: Colors.green,
                           inactiveThumbColor: Colors.grey,
                           inactiveTrackColor: Colors.grey[800],
                           onChanged: (value) =>
