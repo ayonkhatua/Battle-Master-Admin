@@ -10,27 +10,50 @@ class PaymentRequestsScreen extends StatefulWidget {
 }
 
 class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
-  // ValueNotifier for manual refresh
-  final ValueNotifier<int> _requestListRefresher = ValueNotifier<int>(0);
+  // ValueNotifiers for manual & auto refresh
+  final ValueNotifier<int> _depositRefresher = ValueNotifier<int>(0);
+  final ValueNotifier<int> _withdrawRefresher = ValueNotifier<int>(0);
 
   final TextEditingController _upiController = TextEditingController();
   bool _isLoadingUpi = true;
   bool _isSavingUpi = false;
 
+  // 🌟 NAYA: Realtime channel ka variable
+  late final RealtimeChannel _txnChannel;
+
   @override
   void initState() {
     super.initState();
     _fetchUpiId();
+    _setupRealtimeListener(); // 🌟 NAYA: Screen khulte hi listener chalu
+  }
+
+  // 🌟 NAYA: Supabase Realtime Listener (Instant Update Logic)
+  void _setupRealtimeListener() {
+    _txnChannel = Supabase.instance.client.channel('public:transactions');
+    _txnChannel.onPostgresChanges(
+      event: PostgresChangeEvent.all, // Insert, Update, ya Delete kuch bhi ho
+      schema: 'public',
+      table: 'transactions',
+      callback: (payload) {
+        // Database me kuch bhi change hoga, dono tabs auto-refresh ho jayenge!
+        _depositRefresher.value++;
+        _withdrawRefresher.value++;
+      },
+    ).subscribe();
   }
 
   @override
   void dispose() {
+    // Screen band hone par listener hata do taaki memory leak na ho
+    Supabase.instance.client.removeChannel(_txnChannel);
     _upiController.dispose();
-    _requestListRefresher.dispose();
+    _depositRefresher.dispose();
+    _withdrawRefresher.dispose();
     super.dispose();
   }
 
-  // Fetch existing UPI ID from the database
+  // --- UPI ID FETCH & SAVE ---
   Future<void> _fetchUpiId() async {
     try {
       final data = await Supabase.instance.client
@@ -45,349 +68,351 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
     } catch (e) {
       debugPrint('Error fetching UPI: $e');
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoadingUpi = false;
-        });
-      }
+      if (mounted) setState(() => _isLoadingUpi = false);
     }
   }
 
-  // Save or update the UPI ID in the database
   Future<void> _updateUpiId() async {
-    setState(() {
-      _isSavingUpi = true;
-    });
-
+    setState(() => _isSavingUpi = true);
     try {
       final upi = _upiController.text.trim();
-
-      final existingData = await Supabase.instance.client
-          .from('app_config')
-          .select('id')
-          .eq('id', 1)
-          .maybeSingle();
+      final existingData = await Supabase.instance.client.from('app_config').select('id').eq('id', 1).maybeSingle();
 
       if (existingData == null) {
-        await Supabase.instance.client.from('app_config').insert({
-          'id': 1,
-          'upi_id': upi,
-        });
+        await Supabase.instance.client.from('app_config').insert({'id': 1, 'upi_id': upi});
       } else {
-        await Supabase.instance.client
-            .from('app_config')
-            .update({'upi_id': upi})
-            .eq('id', 1);
+        await Supabase.instance.client.from('app_config').update({'upi_id': upi}).eq('id', 1);
       }
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('✅ UPI ID updated successfully!'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
+      _showSnackBar('✅ UPI ID updated successfully!', Colors.green);
     } catch (e) {
-      final errorMsg = e is PostgrestException ? e.message : e.toString();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: $errorMsg'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      _showSnackBar('Error: ${e.toString()}', Colors.red);
     } finally {
-      if (mounted) {
-        setState(() {
-          _isSavingUpi = false;
-        });
-      }
+      if (mounted) setState(() => _isSavingUpi = false);
     }
   }
 
-  // Fetch pending credit requests along with user details
-  Future<List<Map<String, dynamic>>> _fetchPendingCredits() async {
+  // --- FETCH DATA LOGIC ---
+  // 🌟 FIXED: Ab type ek single string nahi, List of strings lega
+  Future<List<Map<String, dynamic>>> _fetchRequests(List<String> types) async {
     final response = await Supabase.instance.client
         .from('transactions')
-        .select('id, amount, status, created_at, users(username, email)')
-        .eq('type', 'credit')
+        .select('id, amount, status, created_at, txn_ref, user_id, users(username, email)') 
+        .inFilter('type', types) // 🌟 FIX: 'deposit' aur 'credit' dono check karega
         .eq('status', 'pending')
-        .order('created_at', ascending: false);
+        .order('created_at', ascending: true); // FIFO Queue: Jo pehle aaya wo upar
 
     return List<Map<String, dynamic>>.from(response);
   }
 
-  // Call the stored procedure to approve or reject
-  Future<void> _handleRequest(int txId, String action) async {
-    if (!mounted) return;
-
+  // --- HANDLE ADD COIN (DEPOSIT) ---
+  Future<void> _handleDeposit(int txId, String action) async {
     try {
-      final result = await Supabase.instance.client.rpc(
+      await Supabase.instance.client.rpc(
         'approve_reject_credit',
         params: {'p_tx_id': txId, 'p_action': action},
       );
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(result.toString()),
-          backgroundColor: Colors.green,
-        ),
-      );
+      _showSnackBar("✅ Deposit $action successfully!", Colors.green);
     } catch (e) {
-      final errorMsg = e is PostgrestException ? e.message : e.toString();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: $errorMsg'),
-          backgroundColor: Colors.red,
-        ),
-      );
+      _showSnackBar('❌ Error: ${e.toString()}', Colors.red);
     }
+  }
 
-    // Refresh the list
-    _requestListRefresher.value++;
+  // --- HANDLE WITHDRAWAL ---
+  Future<void> _handleWithdraw(int txId, String action) async {
+    try {
+      String newStatus = action == 'approve' ? 'approved' : 'rejected';
+      await Supabase.instance.client
+          .from('transactions')
+          .update({'status': newStatus})
+          .eq('id', txId);
+
+      _showSnackBar(action == 'approve' ? "💸 Payment marked as PAID!" : "❌ Request Rejected (Refunded)", action == 'approve' ? Colors.green : Colors.orange);
+    } catch (e) {
+      _showSnackBar('❌ Error: ${e.toString()}', Colors.red);
+    }
+  }
+
+  void _showSnackBar(String msg, Color color) {
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      appBar: AppBar(
-        title: const Text('Wallet Credit Requests'),
-        automaticallyImplyLeading: false,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
+    return DefaultTabController(
+      length: 2, 
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0B1120),
+        appBar: AppBar(
+          title: const Text('TRANSACTION REQUESTS', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+          automaticallyImplyLeading: false,
+          backgroundColor: const Color(0xFF0F172A),
+          centerTitle: true,
+          elevation: 0,
+          bottom: const TabBar(
+            indicatorColor: Colors.blueAccent,
+            indicatorWeight: 3,
+            labelColor: Colors.blueAccent,
+            unselectedLabelColor: Colors.white54,
+            labelStyle: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            tabs: [
+              Tab(text: "ADD COIN (IN)"),
+              Tab(text: "WITHDRAW (OUT)"),
+            ],
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            // TAB 1: ADD COIN 
+            // 🌟 NAYA: Pass ['deposit', 'credit'] taaki dono show ho
+            Column(
+              children: [
+                _buildUpiBox(), 
+                Expanded(child: _buildListWidget(['deposit', 'credit'], _depositRefresher, _handleDeposit)),
+              ],
+            ),
+            
+            // TAB 2: WITHDRAWAL
+            _buildListWidget(['withdraw'], _withdrawRefresher, _handleWithdraw),
+          ],
+        ),
       ),
-      body: Column(
-        children: [
-          _buildUpiBox(),
-          Expanded(
-            child: ValueListenableBuilder<int>(
-              valueListenable: _requestListRefresher,
-              builder: (context, _, __) {
-                return FutureBuilder<List<Map<String, dynamic>>>(
-                  future: _fetchPendingCredits(),
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
-                    if (snapshot.hasError) {
-                      return Center(
-                        child: Text(
-                          'Error: ${snapshot.error}',
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                      );
-                    }
-                    if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                      return const Center(
-                        child: Text(
-                          'No pending credit requests found.',
-                          style: TextStyle(fontSize: 16, color: Colors.grey),
-                        ),
-                      );
-                    }
+    );
+  }
 
-                    final requests = snapshot.data!;
+  // 🌟 Reusable List Builder for both tabs
+  Widget _buildListWidget(List<String> types, ValueNotifier<int> refresher, Function(int, String) actionHandler) {
+    bool isDeposit = types.contains('deposit');
 
-                    return ListView.builder(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      itemCount: requests.length,
-                      itemBuilder: (context, index) {
-                        final request = requests[index];
-                        final user = request['users']; // Nested user object
-                        final formattedDate = DateFormat(
-                          'dd MMM yyyy, hh:mm a',
-                        ).format(DateTime.parse(request['created_at']));
+    return ValueListenableBuilder<int>(
+      valueListenable: refresher,
+      builder: (context, _, __) {
+        return FutureBuilder<List<Map<String, dynamic>>>(
+          future: _fetchRequests(types),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator(color: Colors.blueAccent));
+            }
+            if (snapshot.hasError) {
+              return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.redAccent)));
+            }
+            if (!snapshot.hasData || snapshot.data!.isEmpty) {
+              return Center(
+                child: Text(
+                  isDeposit ? 'No pending coin requests. 🎉' : 'No pending withdraw requests. 🎉', 
+                  style: const TextStyle(fontSize: 16, color: Colors.white54)
+                ),
+              );
+            }
 
-                        return Card(
-                          color: const Color(0xFF1E1E1E),
-                          elevation: 3,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          margin: const EdgeInsets.symmetric(vertical: 8),
-                          child: Padding(
-                            padding: const EdgeInsets.all(16.0),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'User: ${user?['username'] ?? 'N/A'}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Email: ${user?['email'] ?? 'N/A'}',
-                                  style: const TextStyle(color: Colors.grey),
-                                ),
-                                const SizedBox(height: 12),
-                                Text.rich(
-                                  TextSpan(
-                                    text: 'Amount: ',
-                                    style: const TextStyle(color: Colors.white),
-                                    children: <TextSpan>[
-                                      TextSpan(
-                                        text: '₹${request['amount']}',
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.greenAccent,
-                                          fontSize: 16,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Requested At: $formattedDate',
-                                  style: const TextStyle(
-                                    color: Colors.grey,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                                const SizedBox(height: 16),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.end,
-                                  children: [
-                                    ElevatedButton.icon(
-                                      onPressed: () => _handleRequest(
-                                        request['id'],
-                                        'reject',
-                                      ),
-                                      icon: const Icon(Icons.close),
-                                      label: const Text('Reject'),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.red[800],
-                                        foregroundColor: Colors.white,
-                                      ),
+            final requests = snapshot.data!;
+
+            return ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              itemCount: requests.length,
+              itemBuilder: (context, index) {
+                final request = requests[index];
+                final user = request['users']; 
+                
+                final formattedDate = DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.parse(request['created_at']).toLocal());
+                final txnRef = request['txn_ref'] ?? 'N/A';
+                final amount = request['amount']?.toString() ?? '0';
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 15),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E293B),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: isDeposit ? Colors.blueAccent.withOpacity(0.3) : Colors.redAccent.withOpacity(0.3)),
+                    boxShadow: [
+                      BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 8, offset: const Offset(0, 4)),
+                    ],
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Top Row: Username and Amount
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Row(
+                                children: [
+                                  Icon(isDeposit ? Icons.person_add : Icons.account_balance_wallet, color: isDeposit ? Colors.blueAccent : Colors.redAccent, size: 20),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      user?['username']?.toString().toUpperCase() ?? 'UNKNOWN USER',
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    const SizedBox(width: 10),
-                                    ElevatedButton.icon(
-                                      onPressed: () => _handleRequest(
-                                        request['id'],
-                                        'approve',
-                                      ),
-                                      icon: const Icon(Icons.check),
-                                      label: const Text('Approve'),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.green[700],
-                                        foregroundColor: Colors.white,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                        );
-                      },
-                    );
-                  },
+                            
+                            // Amount Box
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.amberAccent.withOpacity(0.15), 
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: Colors.amberAccent.withOpacity(0.5))
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.monetization_on, color: Colors.amberAccent, size: 16),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    isDeposit ? '+ $amount' : '- $amount',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w900, 
+                                      color: isDeposit ? Colors.greenAccent : Colors.redAccent, 
+                                      fontSize: 16
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const Divider(color: Colors.white10, height: 25),
+                        
+                        // Details Section
+                        _buildDetailRow(Icons.email, 'Email:', user?['email'] ?? 'N/A'),
+                        const SizedBox(height: 8),
+                        
+                        // Different Label based on type
+                        _buildDetailRow(
+                          isDeposit ? Icons.receipt_long : Icons.payment, 
+                          isDeposit ? 'User Txn ID (UTR):' : 'Pay to this UPI:', 
+                          txnRef, 
+                          isHighlight: true,
+                          highlightColor: isDeposit ? Colors.amberAccent : Colors.greenAccent, 
+                        ),
+                        const SizedBox(height: 8),
+                        _buildDetailRow(Icons.access_time, 'Date:', formattedDate),
+                        
+                        const SizedBox(height: 20),
+                        
+                        // Buttons Section
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            _buildActionButton(
+                              icon: Icons.close, 
+                              label: "REJECT", 
+                              color: Colors.redAccent, 
+                              onTap: () => actionHandler(request['id'], 'reject')
+                            ),
+                            const SizedBox(width: 12),
+                            _buildActionButton(
+                              icon: Icons.check, 
+                              label: isDeposit ? "APPROVE" : "MARK AS PAID", 
+                              color: Colors.greenAccent, 
+                              onTap: () => actionHandler(request['id'], 'approve')
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
                 );
               },
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildDetailRow(IconData icon, String label, String value, {bool isHighlight = false, Color highlightColor = Colors.amberAccent}) {
+    return Row(
+      children: [
+        Icon(icon, color: Colors.white54, size: 16),
+        const SizedBox(width: 8),
+        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 13)),
+        const SizedBox(width: 5),
+        Expanded(
+          child: Text(
+            value,
+            style: TextStyle(
+              color: isHighlight ? highlightColor : Colors.white,
+              fontSize: 13,
+              fontWeight: isHighlight ? FontWeight.bold : FontWeight.normal,
             ),
+            overflow: TextOverflow.ellipsis,
           ),
-        ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActionButton({required IconData icon, required String label, required Color color, required VoidCallback onTap}) {
+    return ElevatedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 16, color: Colors.white),
+      label: Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.white)),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: color.withOpacity(0.8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
     );
   }
 
   Widget _buildUpiBox() {
-    return Padding(
-      padding: const EdgeInsets.all(12.0),
-      child: Card(
-        color: const Color(0xFF1E1E1E),
-        elevation: 4,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Admin UPI ID (App Users Will Pay Here)',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+    return Container(
+      margin: const EdgeInsets.all(16.0),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E293B),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blueAccent.withOpacity(0.3)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'App UPI ID (Where users send money)',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white54),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _upiController,
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                    decoration: InputDecoration(
+                      hintText: 'admin@upi',
+                      hintStyle: const TextStyle(color: Colors.white38),
+                      prefixIcon: const Icon(Icons.account_balance_wallet, color: Colors.blueAccent, size: 18),
+                      filled: true,
+                      fillColor: const Color(0xFF0F172A),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                      contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
+                    ),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _upiController,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: InputDecoration(
-                        hintText: 'Enter UPI ID (e.g., name@okaxis)',
-                        hintStyle: const TextStyle(color: Colors.grey),
-                        prefixIcon: const Icon(
-                          Icons.account_balance_wallet,
-                          color: Colors.grey,
-                        ),
-                        filled: true,
-                        fillColor: const Color(0xFF2A2A2A),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide.none,
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(
-                            color: Colors.red,
-                            width: 2,
-                          ),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(
-                          vertical: 0,
-                          horizontal: 16,
-                        ),
-                      ),
-                    ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: _isLoadingUpi || _isSavingUpi ? null : _updateUpiId,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blueAccent,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                   ),
-                  const SizedBox(width: 12),
-                  SizedBox(
-                    height: 48,
-                    child: ElevatedButton(
-                      onPressed: _isLoadingUpi || _isSavingUpi
-                          ? null
-                          : _updateUpiId,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red[800],
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: _isSavingUpi
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
-                                strokeWidth: 2,
-                              ),
-                            )
-                          : const Text(
-                              'SAVE',
-                              style: TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+                  child: _isSavingUpi
+                      ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Text('SAVE', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.white, fontSize: 12)),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
