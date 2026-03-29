@@ -18,25 +18,22 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
   bool _isLoadingUpi = true;
   bool _isSavingUpi = false;
 
-  // 🌟 NAYA: Realtime channel ka variable
   late final RealtimeChannel _txnChannel;
 
   @override
   void initState() {
     super.initState();
     _fetchUpiId();
-    _setupRealtimeListener(); // 🌟 NAYA: Screen khulte hi listener chalu
+    _setupRealtimeListener(); 
   }
 
-  // 🌟 NAYA: Supabase Realtime Listener (Instant Update Logic)
   void _setupRealtimeListener() {
     _txnChannel = Supabase.instance.client.channel('public:transactions');
     _txnChannel.onPostgresChanges(
-      event: PostgresChangeEvent.all, // Insert, Update, ya Delete kuch bhi ho
+      event: PostgresChangeEvent.all, 
       schema: 'public',
       table: 'transactions',
       callback: (payload) {
-        // Database me kuch bhi change hoga, dono tabs auto-refresh ho jayenge!
         _depositRefresher.value++;
         _withdrawRefresher.value++;
       },
@@ -45,7 +42,6 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
 
   @override
   void dispose() {
-    // Screen band hone par listener hata do taaki memory leak na ho
     Supabase.instance.client.removeChannel(_txnChannel);
     _upiController.dispose();
     _depositRefresher.dispose();
@@ -93,14 +89,13 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
   }
 
   // --- FETCH DATA LOGIC ---
-  // 🌟 FIXED: Ab type ek single string nahi, List of strings lega
   Future<List<Map<String, dynamic>>> _fetchRequests(List<String> types) async {
     final response = await Supabase.instance.client
         .from('transactions')
         .select('id, amount, status, created_at, txn_ref, user_id, users(username, email)') 
-        .inFilter('type', types) // 🌟 FIX: 'deposit' aur 'credit' dono check karega
+        .inFilter('type', types) 
         .eq('status', 'pending')
-        .order('created_at', ascending: true); // FIFO Queue: Jo pehle aaya wo upar
+        .order('created_at', ascending: true); // FIFO Queue
 
     return List<Map<String, dynamic>>.from(response);
   }
@@ -112,25 +107,31 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
         'approve_reject_credit',
         params: {'p_tx_id': txId, 'p_action': action},
       );
-      _showSnackBar("✅ Deposit $action successfully!", Colors.green);
+      // Clean string for snackbar (e.g. "approved" -> "Approved")
+      String actionText = action == 'approved' ? 'Approved' : 'Rejected';
+      _showSnackBar("✅ Deposit $actionText successfully!", Colors.green);
     } catch (e) {
       _showSnackBar('❌ Error: ${e.toString()}', Colors.red);
     }
+    // 🌟 FIX: Instant Refresh
+    _depositRefresher.value++;
   }
 
   // --- HANDLE WITHDRAWAL ---
   Future<void> _handleWithdraw(int txId, String action) async {
     try {
-      String newStatus = action == 'approve' ? 'approved' : 'rejected';
+      // 🌟 FIX: Status ko sidha update kar raha hai (Kyunki DB array 'approved'/'rejected' expect karta hai)
       await Supabase.instance.client
           .from('transactions')
-          .update({'status': newStatus})
+          .update({'status': action})
           .eq('id', txId);
 
-      _showSnackBar(action == 'approve' ? "💸 Payment marked as PAID!" : "❌ Request Rejected (Refunded)", action == 'approve' ? Colors.green : Colors.orange);
+      _showSnackBar(action == 'approved' ? "💸 Payment marked as PAID!" : "❌ Request Rejected (Refunded)", action == 'approved' ? Colors.green : Colors.orange);
     } catch (e) {
       _showSnackBar('❌ Error: ${e.toString()}', Colors.red);
     }
+    // 🌟 FIX: Instant Refresh
+    _withdrawRefresher.value++;
   }
 
   void _showSnackBar(String msg, Color color) {
@@ -163,16 +164,12 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
         ),
         body: TabBarView(
           children: [
-            // TAB 1: ADD COIN 
-            // 🌟 NAYA: Pass ['deposit', 'credit'] taaki dono show ho
             Column(
               children: [
                 _buildUpiBox(), 
                 Expanded(child: _buildListWidget(['deposit', 'credit'], _depositRefresher, _handleDeposit)),
               ],
             ),
-            
-            // TAB 2: WITHDRAWAL
             _buildListWidget(['withdraw'], _withdrawRefresher, _handleWithdraw),
           ],
         ),
@@ -180,7 +177,6 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
     );
   }
 
-  // 🌟 Reusable List Builder for both tabs
   Widget _buildListWidget(List<String> types, ValueNotifier<int> refresher, Function(int, String) actionHandler) {
     bool isDeposit = types.contains('deposit');
 
@@ -233,7 +229,6 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Top Row: Username and Amount
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
@@ -252,8 +247,6 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
                                 ],
                               ),
                             ),
-                            
-                            // Amount Box
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                               decoration: BoxDecoration(
@@ -281,14 +274,12 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
                         ),
                         const Divider(color: Colors.white10, height: 25),
                         
-                        // Details Section
                         _buildDetailRow(Icons.email, 'Email:', user?['email'] ?? 'N/A'),
                         const SizedBox(height: 8),
                         
-                        // Different Label based on type
                         _buildDetailRow(
                           isDeposit ? Icons.receipt_long : Icons.payment, 
-                          isDeposit ? 'User Txn ID (UTR):' : 'Pay to this UPI:', 
+                          isDeposit ? 'User Txn ID (UTR):' : 'Pay to this UPI/No:', 
                           txnRef, 
                           isHighlight: true,
                           highlightColor: isDeposit ? Colors.amberAccent : Colors.greenAccent, 
@@ -298,7 +289,7 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
                         
                         const SizedBox(height: 20),
                         
-                        // Buttons Section
+                        // 🌟 FIXED: Buttons ab exact 'rejected' aur 'approved' bhejnege
                         Row(
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
@@ -306,14 +297,14 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
                               icon: Icons.close, 
                               label: "REJECT", 
                               color: Colors.redAccent, 
-                              onTap: () => actionHandler(request['id'], 'reject')
+                              onTap: () => actionHandler(request['id'], 'rejected') // <-- FIXED
                             ),
                             const SizedBox(width: 12),
                             _buildActionButton(
                               icon: Icons.check, 
                               label: isDeposit ? "APPROVE" : "MARK AS PAID", 
                               color: Colors.greenAccent, 
-                              onTap: () => actionHandler(request['id'], 'approve')
+                              onTap: () => actionHandler(request['id'], 'approved') // <-- FIXED
                             ),
                           ],
                         ),
