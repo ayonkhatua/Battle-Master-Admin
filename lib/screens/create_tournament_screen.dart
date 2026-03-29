@@ -1,5 +1,7 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class CreateTournamentScreen extends StatefulWidget {
@@ -17,14 +19,17 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
   final _titleController = TextEditingController();
   String? _mode;
   DateTime? _time;
-  final _imageController = TextEditingController();
+  
+  // 🌟 NAYE IMAGE VARIABLES 🌟
+  Uint8List? _selectedImageBytes;
+  String? _selectedImageName;
+  final ImagePicker _picker = ImagePicker();
+
   final _prizePoolController = TextEditingController();
   final _perKillController = TextEditingController();
   final _entryFeeController = TextEditingController();
   String? _type;
   final _slotsController = TextEditingController();
-  
-  // 🌟 NAYA CONTROLLER: Prize Distribution Details ke liye 🌟
   final _prizeDescriptionController = TextEditingController();
 
   String? _version;
@@ -44,6 +49,30 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
   final List<String> _typeOptions = ['Solo', 'Duo', 'Squad'];
   final List<String> _versionOptions = ['TPP']; 
   final List<String> _mapOptions = ['Bermuda', 'IRON CAGE'];
+
+  // 🌟 IMAGE PICKER FUNCTION 🌟
+  Future<void> _pickImage() async {
+    try {
+      final XFile? image = await _picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 80, // Compress image to save storage
+      );
+
+      if (image != null) {
+        final bytes = await image.readAsBytes();
+        setState(() {
+          _selectedImageBytes = bytes;
+          _selectedImageName = image.name;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error selecting image: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
 
   Future<void> _selectDateTime() async {
     final date = await showDatePicker(
@@ -68,9 +97,13 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
   Future<void> _createTournament() async {
     if (_formKey.currentState!.validate()) {
       if (_time == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please select a time.'))
-        );
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select a time.')));
+        return;
+      }
+
+      // 🌟 CHECK IF IMAGE IS SELECTED 🌟
+      if (_selectedImageBytes == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please select a tournament image!'), backgroundColor: Colors.orange));
         return;
       }
 
@@ -80,12 +113,36 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
 
       try {
         final utcTime = _time!.toUtc().toIso8601String();
+        String finalImageUrl = '';
 
+        // 🌟 1. UPLOAD IMAGE TO SUPABASE STORAGE 🌟
+        final fileExtension = (_selectedImageName != null && _selectedImageName!.contains('.'))
+            ? _selectedImageName!.split('.').last
+            : 'jpg';
+        final fileName = 'tourney_${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
+        
+        // 🌟 NAYA FOLDER LOGIC ('tournaments/' folder me jayega) 🌟
+        final filePath = 'tournaments/$fileName';
+
+        await Supabase.instance.client.storage
+            .from('Battle Master Banner') // Same bucket
+            .uploadBinary(
+              filePath,
+              _selectedImageBytes!,
+              fileOptions: FileOptions(contentType: 'image/$fileExtension', upsert: true),
+            );
+
+        // Public URL nikal lo
+        finalImageUrl = Supabase.instance.client.storage
+            .from('Battle Master Banner')
+            .getPublicUrl(filePath);
+
+        // 🌟 2. INSERT DATA INTO TOURNAMENTS TABLE 🌟
         await Supabase.instance.client.from('tournaments').insert({
           'title': _titleController.text,
           'mode': _mode,
           'time': utcTime,
-          'image_url': _imageController.text,
+          'image_url': finalImageUrl, // Yaha ab Supabase ka direct link aayega
           'prize_pool': _prizePoolController.text,
           'per_kill': _perKillController.text,
           'entry_fee': _entryFeeController.text,
@@ -94,7 +151,6 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
           'map': _map,         
           'slots': int.parse(_slotsController.text),
           'filled': 0, 
-          // 🌟 DATABASE ENTRY: Prize Description yahan save hoga 🌟
           'prize_description': _prizeDescriptionController.text.trim().isNotEmpty 
                                ? _prizeDescriptionController.text.trim() 
                                : null,
@@ -102,19 +158,18 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
         
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('✅ Tournament created successfully in $_mode!')),
+            SnackBar(content: Text('✅ Tournament created successfully in $_mode!'), backgroundColor: Colors.green),
           );
         }
         
         // Form Clear Logic
         _formKey.currentState!.reset();
         _titleController.clear();
-        _imageController.clear();
         _prizePoolController.clear();
         _perKillController.clear();
         _entryFeeController.clear();
         _slotsController.clear();
-        _prizeDescriptionController.clear(); // Isko bhi clear karna zaroori hai
+        _prizeDescriptionController.clear(); 
         
         setState(() {
           _time = null;
@@ -122,21 +177,15 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
           _type = null;
           _version = null;
           _map = null;
+          _selectedImageBytes = null; // Clear image preview
+          _selectedImageName = null;
         });
       } on PostgrestException catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('❌ Error: ${e.message}')));
-        }
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('❌ Error: ${e.message}')));
       } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('❌ An unexpected error occurred: $e')));
-        }
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('❌ An unexpected error occurred: $e')));
       } finally {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
+        if (mounted) setState(() => _isLoading = false);
       }
     }
   }
@@ -197,11 +246,38 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
               ),
               const SizedBox(height: 16),
 
-              TextFormField(
-                controller: _imageController,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(labelText: 'Image URL', filled: true, fillColor: Color(0xFF1e293b)),
-                validator: (v) => v!.isEmpty ? 'Image URL is required' : null,
+              // 🌟 NAYA UI: IMAGE UPLOAD SECTION 🌟
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF1e293b),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.grey.shade800),
+                ),
+                child: Column(
+                  children: [
+                    if (_selectedImageBytes != null)
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.memory(_selectedImageBytes!, height: 150, width: double.infinity, fit: BoxFit.cover),
+                      )
+                    else
+                      Container(
+                        height: 100,
+                        width: double.infinity,
+                        decoration: BoxDecoration(color: const Color(0xFF0f172a), borderRadius: BorderRadius.circular(8)),
+                        child: const Center(child: Text("No Image Selected", style: TextStyle(color: Colors.grey))),
+                      ),
+                    const SizedBox(height: 12),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF3b82f6)),
+                      onPressed: _pickImage,
+                      icon: const Icon(Icons.image, color: Colors.white),
+                      label: const Text("Select Tournament Image", style: TextStyle(color: Colors.white)),
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 16),
 
@@ -231,11 +307,10 @@ class _CreateTournamentScreenState extends State<CreateTournamentScreen> {
               ),
               const SizedBox(height: 16),
 
-              // 🌟 NAYA FIELD: Prize Distribution Details 🌟
               TextFormField(
                 controller: _prizeDescriptionController,
                 style: const TextStyle(color: Colors.white),
-                maxLines: 4, // Multi-line input allow karega
+                maxLines: 4, 
                 decoration: const InputDecoration(
                   labelText: 'Prize Distribution Details (For Popup)', 
                   hintText: 'Example:\n1st Team: 20 Coins (5/Player)\n2nd Team: 10 Coins\nTop Fragger: 5 Coins',
