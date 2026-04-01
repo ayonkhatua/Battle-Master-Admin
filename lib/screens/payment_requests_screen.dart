@@ -24,20 +24,22 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
   void initState() {
     super.initState();
     _fetchUpiId();
-    _setupRealtimeListener(); 
+    _setupRealtimeListener();
   }
 
   void _setupRealtimeListener() {
     _txnChannel = Supabase.instance.client.channel('public:transactions');
-    _txnChannel.onPostgresChanges(
-      event: PostgresChangeEvent.all, 
-      schema: 'public',
-      table: 'transactions',
-      callback: (payload) {
-        _depositRefresher.value++;
-        _withdrawRefresher.value++;
-      },
-    ).subscribe();
+    _txnChannel
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: 'transactions',
+          callback: (payload) {
+            _depositRefresher.value++;
+            _withdrawRefresher.value++;
+          },
+        )
+        .subscribe();
   }
 
   @override
@@ -72,12 +74,22 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
     setState(() => _isSavingUpi = true);
     try {
       final upi = _upiController.text.trim();
-      final existingData = await Supabase.instance.client.from('app_config').select('id').eq('id', 1).maybeSingle();
+      final existingData = await Supabase.instance.client
+          .from('app_config')
+          .select('id')
+          .eq('id', 1)
+          .maybeSingle();
 
       if (existingData == null) {
-        await Supabase.instance.client.from('app_config').insert({'id': 1, 'upi_id': upi});
+        await Supabase.instance.client.from('app_config').insert({
+          'id': 1,
+          'upi_id': upi,
+        });
       } else {
-        await Supabase.instance.client.from('app_config').update({'upi_id': upi}).eq('id', 1);
+        await Supabase.instance.client
+            .from('app_config')
+            .update({'upi_id': upi})
+            .eq('id', 1);
       }
 
       _showSnackBar('✅ UPI ID updated successfully!', Colors.green);
@@ -92,8 +104,10 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
   Future<List<Map<String, dynamic>>> _fetchRequests(List<String> types) async {
     final response = await Supabase.instance.client
         .from('transactions')
-        .select('id, amount, status, created_at, txn_ref, user_id, users(username, email)') 
-        .inFilter('type', types) 
+        .select(
+          'id, amount, status, created_at, txn_ref, user_id, users(username, email)',
+        )
+        .inFilter('type', types)
         .eq('status', 'pending')
         .order('created_at', ascending: true); // FIFO Queue
 
@@ -103,49 +117,65 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
   // --- HANDLE ADD COIN (DEPOSIT) ---
   Future<void> _handleDeposit(int txId, String action) async {
     try {
-      await Supabase.instance.client.rpc(
-        'approve_reject_credit',
-        params: {'p_tx_id': txId, 'p_action': action},
-      );
-      // Clean string for snackbar (e.g. "approved" -> "Approved")
+      // 🌟 SECURE FIX: RPC hata diya. Ab hum sirf status update karenge.
+      // Database Trigger automatically wallet update kar dega bina double kiye!
+      await Supabase.instance.client
+          .from('transactions')
+          .update({'status': action})
+          .eq('id', txId);
+
       String actionText = action == 'approved' ? 'Approved' : 'Rejected';
       _showSnackBar("✅ Deposit $actionText successfully!", Colors.green);
     } catch (e) {
       _showSnackBar('❌ Error: ${e.toString()}', Colors.red);
     }
-    // 🌟 FIX: Instant Refresh
     _depositRefresher.value++;
   }
 
   // --- HANDLE WITHDRAWAL ---
   Future<void> _handleWithdraw(int txId, String action) async {
     try {
-      // 🌟 FIX: Status ko sidha update kar raha hai (Kyunki DB array 'approved'/'rejected' expect karta hai)
+      // 🌟 Withdraw mein bhi same secure logic
       await Supabase.instance.client
           .from('transactions')
           .update({'status': action})
           .eq('id', txId);
 
-      _showSnackBar(action == 'approved' ? "💸 Payment marked as PAID!" : "❌ Request Rejected (Refunded)", action == 'approved' ? Colors.green : Colors.orange);
+      _showSnackBar(
+        action == 'approved'
+            ? "💸 Payment marked as PAID!"
+            : "❌ Request Rejected (Refunded)",
+        action == 'approved' ? Colors.green : Colors.orange,
+      );
     } catch (e) {
       _showSnackBar('❌ Error: ${e.toString()}', Colors.red);
     }
-    // 🌟 FIX: Instant Refresh
     _withdrawRefresher.value++;
   }
 
   void _showSnackBar(String msg, Color color) {
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
+    if (mounted)
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
   }
 
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2, 
+      length: 2,
       child: Scaffold(
         backgroundColor: const Color(0xFF0B1120),
         appBar: AppBar(
-          title: const Text('TRANSACTION REQUESTS', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1.2)),
+          title: const Text(
+            'TRANSACTION REQUESTS',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.2,
+            ),
+          ),
           automaticallyImplyLeading: false,
           backgroundColor: const Color(0xFF0F172A),
           centerTitle: true,
@@ -166,8 +196,14 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
           children: [
             Column(
               children: [
-                _buildUpiBox(), 
-                Expanded(child: _buildListWidget(['deposit', 'credit'], _depositRefresher, _handleDeposit)),
+                _buildUpiBox(),
+                Expanded(
+                  child: _buildListWidget(
+                    ['deposit', 'credit'],
+                    _depositRefresher,
+                    _handleDeposit,
+                  ),
+                ),
               ],
             ),
             _buildListWidget(['withdraw'], _withdrawRefresher, _handleWithdraw),
@@ -177,7 +213,11 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
     );
   }
 
-  Widget _buildListWidget(List<String> types, ValueNotifier<int> refresher, Function(int, String) actionHandler) {
+  Widget _buildListWidget(
+    List<String> types,
+    ValueNotifier<int> refresher,
+    Function(int, String) actionHandler,
+  ) {
     bool isDeposit = types.contains('deposit');
 
     return ValueListenableBuilder<int>(
@@ -187,16 +227,25 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
           future: _fetchRequests(types),
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator(color: Colors.blueAccent));
+              return const Center(
+                child: CircularProgressIndicator(color: Colors.blueAccent),
+              );
             }
             if (snapshot.hasError) {
-              return Center(child: Text('Error: ${snapshot.error}', style: const TextStyle(color: Colors.redAccent)));
+              return Center(
+                child: Text(
+                  'Error: ${snapshot.error}',
+                  style: const TextStyle(color: Colors.redAccent),
+                ),
+              );
             }
             if (!snapshot.hasData || snapshot.data!.isEmpty) {
               return Center(
                 child: Text(
-                  isDeposit ? 'No pending coin requests. 🎉' : 'No pending withdraw requests. 🎉', 
-                  style: const TextStyle(fontSize: 16, color: Colors.white54)
+                  isDeposit
+                      ? 'No pending coin requests. 🎉'
+                      : 'No pending withdraw requests. 🎉',
+                  style: const TextStyle(fontSize: 16, color: Colors.white54),
                 ),
               );
             }
@@ -208,9 +257,11 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
               itemCount: requests.length,
               itemBuilder: (context, index) {
                 final request = requests[index];
-                final user = request['users']; 
-                
-                final formattedDate = DateFormat('dd MMM yyyy, hh:mm a').format(DateTime.parse(request['created_at']).toLocal());
+                final user = request['users'];
+
+                final formattedDate = DateFormat(
+                  'dd MMM yyyy, hh:mm a',
+                ).format(DateTime.parse(request['created_at']).toLocal());
                 final txnRef = request['txn_ref'] ?? 'N/A';
                 final amount = request['amount']?.toString() ?? '0';
 
@@ -219,9 +270,17 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
                   decoration: BoxDecoration(
                     color: const Color(0xFF1E293B),
                     borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: isDeposit ? Colors.blueAccent.withOpacity(0.3) : Colors.redAccent.withOpacity(0.3)),
+                    border: Border.all(
+                      color: isDeposit
+                          ? Colors.blueAccent.withOpacity(0.3)
+                          : Colors.redAccent.withOpacity(0.3),
+                    ),
                     boxShadow: [
-                      BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 8, offset: const Offset(0, 4)),
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.2),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
                     ],
                   ),
                   child: Padding(
@@ -235,12 +294,27 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
                             Expanded(
                               child: Row(
                                 children: [
-                                  Icon(isDeposit ? Icons.person_add : Icons.account_balance_wallet, color: isDeposit ? Colors.blueAccent : Colors.redAccent, size: 20),
+                                  Icon(
+                                    isDeposit
+                                        ? Icons.person_add
+                                        : Icons.account_balance_wallet,
+                                    color: isDeposit
+                                        ? Colors.blueAccent
+                                        : Colors.redAccent,
+                                    size: 20,
+                                  ),
                                   const SizedBox(width: 8),
                                   Expanded(
                                     child: Text(
-                                      user?['username']?.toString().toUpperCase() ?? 'UNKNOWN USER',
-                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.white),
+                                      user?['username']
+                                              ?.toString()
+                                              .toUpperCase() ??
+                                          'UNKNOWN USER',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                        color: Colors.white,
+                                      ),
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
@@ -248,23 +322,34 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
                               ),
                             ),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
                               decoration: BoxDecoration(
-                                color: Colors.amberAccent.withOpacity(0.15), 
+                                color: Colors.amberAccent.withOpacity(0.15),
                                 borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: Colors.amberAccent.withOpacity(0.5))
+                                border: Border.all(
+                                  color: Colors.amberAccent.withOpacity(0.5),
+                                ),
                               ),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  const Icon(Icons.monetization_on, color: Colors.amberAccent, size: 16),
+                                  const Icon(
+                                    Icons.monetization_on,
+                                    color: Colors.amberAccent,
+                                    size: 16,
+                                  ),
                                   const SizedBox(width: 4),
                                   Text(
                                     isDeposit ? '+ $amount' : '- $amount',
                                     style: TextStyle(
-                                      fontWeight: FontWeight.w900, 
-                                      color: isDeposit ? Colors.greenAccent : Colors.redAccent, 
-                                      fontSize: 16
+                                      fontWeight: FontWeight.w900,
+                                      color: isDeposit
+                                          ? Colors.greenAccent
+                                          : Colors.redAccent,
+                                      fontSize: 16,
                                     ),
                                   ),
                                 ],
@@ -273,38 +358,51 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
                           ],
                         ),
                         const Divider(color: Colors.white10, height: 25),
-                        
-                        _buildDetailRow(Icons.email, 'Email:', user?['email'] ?? 'N/A'),
-                        const SizedBox(height: 8),
-                        
+
                         _buildDetailRow(
-                          isDeposit ? Icons.receipt_long : Icons.payment, 
-                          isDeposit ? 'User Txn ID (UTR):' : 'Pay to this UPI/No:', 
-                          txnRef, 
-                          isHighlight: true,
-                          highlightColor: isDeposit ? Colors.amberAccent : Colors.greenAccent, 
+                          Icons.email,
+                          'Email:',
+                          user?['email'] ?? 'N/A',
                         ),
                         const SizedBox(height: 8),
-                        _buildDetailRow(Icons.access_time, 'Date:', formattedDate),
-                        
+
+                        _buildDetailRow(
+                          isDeposit ? Icons.receipt_long : Icons.payment,
+                          isDeposit
+                              ? 'User Txn ID (UTR):'
+                              : 'Pay to this UPI/No:',
+                          txnRef,
+                          isHighlight: true,
+                          highlightColor: isDeposit
+                              ? Colors.amberAccent
+                              : Colors.greenAccent,
+                        ),
+                        const SizedBox(height: 8),
+                        _buildDetailRow(
+                          Icons.access_time,
+                          'Date:',
+                          formattedDate,
+                        ),
+
                         const SizedBox(height: 20),
-                        
-                        // 🌟 FIXED: Buttons ab exact 'rejected' aur 'approved' bhejnege
+
                         Row(
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
                             _buildActionButton(
-                              icon: Icons.close, 
-                              label: "REJECT", 
-                              color: Colors.redAccent, 
-                              onTap: () => actionHandler(request['id'], 'rejected') // <-- FIXED
+                              icon: Icons.close,
+                              label: "REJECT",
+                              color: Colors.redAccent,
+                              onTap: () =>
+                                  actionHandler(request['id'], 'rejected'),
                             ),
                             const SizedBox(width: 12),
                             _buildActionButton(
-                              icon: Icons.check, 
-                              label: isDeposit ? "APPROVE" : "MARK AS PAID", 
-                              color: Colors.greenAccent, 
-                              onTap: () => actionHandler(request['id'], 'approved') // <-- FIXED
+                              icon: Icons.check,
+                              label: isDeposit ? "APPROVE" : "MARK AS PAID",
+                              color: Colors.greenAccent,
+                              onTap: () =>
+                                  actionHandler(request['id'], 'approved'),
                             ),
                           ],
                         ),
@@ -320,12 +418,21 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
     );
   }
 
-  Widget _buildDetailRow(IconData icon, String label, String value, {bool isHighlight = false, Color highlightColor = Colors.amberAccent}) {
+  Widget _buildDetailRow(
+    IconData icon,
+    String label,
+    String value, {
+    bool isHighlight = false,
+    Color highlightColor = Colors.amberAccent,
+  }) {
     return Row(
       children: [
         Icon(icon, color: Colors.white54, size: 16),
         const SizedBox(width: 8),
-        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 13)),
+        Text(
+          label,
+          style: const TextStyle(color: Colors.white54, fontSize: 13),
+        ),
         const SizedBox(width: 5),
         Expanded(
           child: Text(
@@ -342,11 +449,23 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
     );
   }
 
-  Widget _buildActionButton({required IconData icon, required String label, required Color color, required VoidCallback onTap}) {
+  Widget _buildActionButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
     return ElevatedButton.icon(
       onPressed: onTap,
       icon: Icon(icon, size: 16, color: Colors.white),
-      label: Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.white)),
+      label: Text(
+        label,
+        style: const TextStyle(
+          fontWeight: FontWeight.bold,
+          fontSize: 12,
+          color: Colors.white,
+        ),
+      ),
       style: ElevatedButton.styleFrom(
         backgroundColor: color.withOpacity(0.8),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -370,7 +489,11 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
           children: [
             const Text(
               'App UPI ID (Where users send money)',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white54),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: Colors.white54,
+              ),
             ),
             const SizedBox(height: 8),
             Row(
@@ -378,28 +501,60 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
                 Expanded(
                   child: TextField(
                     controller: _upiController,
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
                     decoration: InputDecoration(
                       hintText: 'admin@upi',
                       hintStyle: const TextStyle(color: Colors.white38),
-                      prefixIcon: const Icon(Icons.account_balance_wallet, color: Colors.blueAccent, size: 18),
+                      prefixIcon: const Icon(
+                        Icons.account_balance_wallet,
+                        color: Colors.blueAccent,
+                        size: 18,
+                      ),
                       filled: true,
                       fillColor: const Color(0xFF0F172A),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
-                      contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        vertical: 0,
+                        horizontal: 12,
+                      ),
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
                 ElevatedButton(
-                  onPressed: _isLoadingUpi || _isSavingUpi ? null : _updateUpiId,
+                  onPressed: _isLoadingUpi || _isSavingUpi
+                      ? null
+                      : _updateUpiId,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.blueAccent,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                   ),
                   child: _isSavingUpi
-                      ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                      : const Text('SAVE', style: TextStyle(fontWeight: FontWeight.w900, color: Colors.white, fontSize: 12)),
+                      ? const SizedBox(
+                          height: 16,
+                          width: 16,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Text(
+                          'SAVE',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
+                        ),
                 ),
               ],
             ),
