@@ -115,16 +115,39 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
   }
 
   // --- HANDLE ADD COIN (DEPOSIT) ---
-  Future<void> _handleDeposit(int txId, String action) async {
+  // 🌟 NAYA FIX: Ab humein pura request map mil raha hai calculation ke liye
+  Future<void> _handleDeposit(Map<String, dynamic> request, String action) async {
     try {
-      // 🌟 SECURE FIX: RPC hata diya. Ab hum sirf status update karenge.
-      // Database Trigger automatically wallet update kar dega bina double kiye!
+      final txId = request['id'];
+      final userId = request['user_id'];
+      final amount = request['amount'] ?? 0;
+
+      // 1. Transaction status update karo
       await Supabase.instance.client
           .from('transactions')
           .update({'status': action})
           .eq('id', txId);
 
-      String actionText = action == 'approved' ? 'Approved' : 'Rejected';
+      // 2. Agar Accept kiya hai, toh user ko paise do!
+      if (action == 'approved') {
+        // User ka purana balance mangwao
+        final userData = await Supabase.instance.client
+            .from('users')
+            .select('wallet_balance, deposited')
+            .eq('id', userId)
+            .single();
+
+        int currentBalance = userData['wallet_balance'] ?? 0;
+        int currentDeposited = userData['deposited'] ?? 0;
+
+        // Paise Plus (+) karke wapas save kar do
+        await Supabase.instance.client.from('users').update({
+          'wallet_balance': currentBalance + amount,
+          'deposited': currentDeposited + amount,
+        }).eq('id', userId);
+      }
+
+      String actionText = action == 'approved' ? 'Approved & Coins Added' : 'Rejected';
       _showSnackBar("✅ Deposit $actionText successfully!", Colors.green);
     } catch (e) {
       _showSnackBar('❌ Error: ${e.toString()}', Colors.red);
@@ -133,18 +156,45 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
   }
 
   // --- HANDLE WITHDRAWAL ---
-  Future<void> _handleWithdraw(int txId, String action) async {
+  // 🌟 NAYA FIX: Withdraw accept/reject logic
+  Future<void> _handleWithdraw(Map<String, dynamic> request, String action) async {
     try {
-      // 🌟 Withdraw mein bhi same secure logic
+      final txId = request['id'];
+      final userId = request['user_id'];
+      final amount = request['amount'] ?? 0;
+
+      // 1. Transaction status update karo
       await Supabase.instance.client
           .from('transactions')
           .update({'status': action})
           .eq('id', txId);
 
+      // User ka current data mangwa lo
+      final userData = await Supabase.instance.client
+          .from('users')
+          .select('wallet_balance, total_withdrawn')
+          .eq('id', userId)
+          .single();
+
+      // 2. Agar Admin ne Reject (Cancel) kar diya, toh paise Refund karo
+      if (action == 'rejected') {
+        int currentBalance = userData['wallet_balance'] ?? 0;
+        await Supabase.instance.client.from('users').update({
+          'wallet_balance': currentBalance + amount, // Paise wapas de diye
+        }).eq('id', userId);
+      } 
+      // 3. Agar Approve kiya, toh bas Record mein likh do ki usne kitna nikal liya (History)
+      else if (action == 'approved') {
+        int currentWithdrawn = userData['total_withdrawn'] ?? 0;
+        await Supabase.instance.client.from('users').update({
+          'total_withdrawn': currentWithdrawn + amount,
+        }).eq('id', userId);
+      }
+
       _showSnackBar(
         action == 'approved'
             ? "💸 Payment marked as PAID!"
-            : "❌ Request Rejected (Refunded)",
+            : "❌ Request Rejected (Refunded to Wallet)",
         action == 'approved' ? Colors.green : Colors.orange,
       );
     } catch (e) {
@@ -154,10 +204,11 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
   }
 
   void _showSnackBar(String msg, Color color) {
-    if (mounted)
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: color));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), backgroundColor: color),
+      );
+    }
   }
 
   @override
@@ -213,10 +264,11 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
     );
   }
 
+  // 🌟 NAYA FIX: actionHandler ab ID ki jagah pura 'request' object bhej raha hai
   Widget _buildListWidget(
     List<String> types,
     ValueNotifier<int> refresher,
-    Function(int, String) actionHandler,
+    Function(Map<String, dynamic>, String) actionHandler,
   ) {
     bool isDeposit = types.contains('deposit');
 
@@ -358,14 +410,12 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
                           ],
                         ),
                         const Divider(color: Colors.white10, height: 25),
-
                         _buildDetailRow(
                           Icons.email,
                           'Email:',
                           user?['email'] ?? 'N/A',
                         ),
                         const SizedBox(height: 8),
-
                         _buildDetailRow(
                           isDeposit ? Icons.receipt_long : Icons.payment,
                           isDeposit
@@ -383,9 +433,7 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
                           'Date:',
                           formattedDate,
                         ),
-
                         const SizedBox(height: 20),
-
                         Row(
                           mainAxisAlignment: MainAxisAlignment.end,
                           children: [
@@ -393,16 +441,14 @@ class _PaymentRequestsScreenState extends State<PaymentRequestsScreen> {
                               icon: Icons.close,
                               label: "REJECT",
                               color: Colors.redAccent,
-                              onTap: () =>
-                                  actionHandler(request['id'], 'rejected'),
+                              onTap: () => actionHandler(request, 'rejected'),
                             ),
                             const SizedBox(width: 12),
                             _buildActionButton(
                               icon: Icons.check,
                               label: isDeposit ? "APPROVE" : "MARK AS PAID",
                               color: Colors.greenAccent,
-                              onTap: () =>
-                                  actionHandler(request['id'], 'approved'),
+                              onTap: () => actionHandler(request, 'approved'),
                             ),
                           ],
                         ),
