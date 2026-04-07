@@ -97,10 +97,9 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(
-                        Icons.admin_panel_settings,
-                        size: 80,
-                        color: Colors.red, // Blueprint Primary Color
+                      Image.asset(
+                        'assets/images/logo.png',
+                        height: 80,
                       ),
                       const SizedBox(height: 16),
                       Text(
