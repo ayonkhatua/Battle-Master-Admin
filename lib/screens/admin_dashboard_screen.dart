@@ -8,8 +8,9 @@ import 'package:battle_master_admin/admin_settings_page.dart';
 import 'package:flutter/material.dart';
 import 'package:battle_master_admin/screens/admin_contact_us_screen.dart';
 import 'package:battle_master_admin/screens/admin_banner_screen.dart';
+// 🌟 NAYA IMPORT YAHAN HAI 🌟
+import 'package:battle_master_admin/screens/verify_matches_screen.dart';
 
-// ... (DashboardHomeWidget wahi rahega)
 class DashboardHomeWidget extends StatelessWidget {
   const DashboardHomeWidget({super.key});
   @override
@@ -27,19 +28,21 @@ class AdminDashboardScreen extends StatefulWidget {
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int _selectedIndex = 0;
-  bool _isExpanded = true; // Added missing state variable
+  bool _isExpanded = true; 
 
+  // 🌟 SCREENS LIST UPDATE KAR DI GAYI HAI 🌟
   static const List<Widget> _screens = [
-    DashboardHomeWidget(), // 0
-    CreateTournamentScreen(), // 1
-    ManageTournamentScreen(), // 2
-    DeleteTournamentScreen(), // 3
-    CoinAddScreen(), // 4
-    PaymentRequestsScreen(), // 5 (Naya)
-    AdminUsersScreen(), // 6
-    AdminSettingsPage(), // 7 (Settings)
-    AdminContactUsScreen(), // 8 (Contact Us)
-    AdminBannerScreen(), // 9 (Banner Upload)
+    DashboardHomeWidget(),          // 0
+    CreateTournamentScreen(),       // 1
+    ManageTournamentScreen(),       // 2
+    VerifyMatchesScreen(),          // 3 (🌟 NAYI SCREEN YAHAN ADD KI HAI)
+    DeleteTournamentScreen(),       // 4
+    CoinAddScreen(),                // 5
+    PaymentRequestsScreen(),        // 6
+    AdminUsersScreen(),             // 7
+    AdminSettingsPage(),            // 8
+    AdminContactUsScreen(),         // 9
+    AdminBannerScreen(),            // 10
   ];
 
   @override
@@ -61,7 +64,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           if (_isExpanded) ...[
             NavigationRail(
               selectedIndex: _selectedIndex,
-              extended: true, // Pura on rahega jab bhi dikhega
+              extended: true, 
               onDestinationSelected: (int index) {
                 setState(() {
                   _selectedIndex = index;
@@ -82,6 +85,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   icon: Icon(Icons.edit_document),
                   selectedIcon: Icon(Icons.edit_document),
                   label: Text('Manage Match'),
+                ),
+                // 🌟 NAYA MENU OPTION YAHAN ADD KIYA HAI 🌟
+                NavigationRailDestination(
+                  icon: Icon(Icons.fact_check_outlined),
+                  selectedIcon: Icon(Icons.fact_check),
+                  label: Text('Verify Matches'),
                 ),
                 NavigationRailDestination(
                   icon: Icon(Icons.delete_forever_outlined),
