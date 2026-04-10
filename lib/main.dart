@@ -44,13 +44,32 @@ class AdminApp extends StatelessWidget {
           ),
         ),
       ),
-      initialRoute: '/', // Initial route set to login screen
+      // 🌟 YAHAN UPDATE KIYA HAI: Direct initialRoute ki jagah AuthGate use kiya 🌟
+      home: const AuthGate(), 
       routes: {
-        '/': (context) => const AdminLoginScreen(),
-        '/admin_dashboard_screen': (context) =>
-            const AdminDashboardScreen(), // Admin Dashboard route define kiya
+        // '/' route yahan se hata diya taaki conflict na ho
+        '/admin_dashboard_screen': (context) => const AdminDashboardScreen(), 
       },
       debugShowCheckedModeBanner: false,
     );
+  }
+}
+
+// 🛡️ SECURITY GATE: Check karega ki user pehle se login hai ya nahi
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    // Supabase se current session (token) check karo
+    final session = Supabase.instance.client.auth.currentSession;
+
+    if (session != null) {
+      // ✅ Agar user pehle se login hai, seedha Admin Dashboard par bhejo
+      return const AdminDashboardScreen();
+    } else {
+      // ❌ Agar login nahi hai (ya logout kar diya), toh Login Screen dikhao
+      return const AdminLoginScreen();
+    }
   }
 }

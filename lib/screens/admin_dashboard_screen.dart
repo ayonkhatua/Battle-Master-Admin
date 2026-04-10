@@ -8,8 +8,11 @@ import 'package:battle_master_admin/admin_settings_page.dart';
 import 'package:flutter/material.dart';
 import 'package:battle_master_admin/screens/admin_contact_us_screen.dart';
 import 'package:battle_master_admin/screens/admin_banner_screen.dart';
-// 🌟 NAYA IMPORT YAHAN HAI 🌟
 import 'package:battle_master_admin/screens/verify_matches_screen.dart';
+import 'package:battle_master_admin/screens/host_approval_screen.dart'; 
+// 🌟 SUPABASE & LOGIN SCREEN IMPORT KIYA LOGOUT KE LIYE 🌟
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:battle_master_admin/screens/admin_login_screen.dart';
 
 class DashboardHomeWidget extends StatelessWidget {
   const DashboardHomeWidget({super.key});
@@ -30,20 +33,65 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int _selectedIndex = 0;
   bool _isExpanded = true; 
 
-  // 🌟 SCREENS LIST UPDATE KAR DI GAYI HAI 🌟
   static const List<Widget> _screens = [
     DashboardHomeWidget(),          // 0
     CreateTournamentScreen(),       // 1
     ManageTournamentScreen(),       // 2
-    VerifyMatchesScreen(),          // 3 (🌟 NAYI SCREEN YAHAN ADD KI HAI)
+    VerifyMatchesScreen(),          // 3
     DeleteTournamentScreen(),       // 4
     CoinAddScreen(),                // 5
     PaymentRequestsScreen(),        // 6
     AdminUsersScreen(),             // 7
-    AdminSettingsPage(),            // 8
-    AdminContactUsScreen(),         // 9
-    AdminBannerScreen(),            // 10
+    HostApprovalScreen(),           // 8 
+    AdminSettingsPage(),            // 9
+    AdminContactUsScreen(),         // 10
+    AdminBannerScreen(),            // 11
   ];
+
+  // 🌟 LOGOUT FUNCTION 🌟
+  Future<void> _handleLogout() async {
+    bool confirm = await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text('Confirm Logout', style: TextStyle(color: Colors.white)),
+        content: const Text('Are you sure you want to log out?', style: TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('CANCEL', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('LOGOUT'),
+          ),
+        ],
+      ),
+    ) ?? false;
+
+    if (confirm) {
+      try {
+        // Supabase se sign out
+        await Supabase.instance.client.auth.signOut();
+        
+        // Login Screen par bhejo aur pichli saari screens hata do
+        if (mounted) {
+          Navigator.pushAndRemoveUntil(
+            context, 
+            MaterialPageRoute(builder: (context) => const AdminLoginScreen()), 
+            (route) => false
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error logging out: $e'), backgroundColor: Colors.red),
+          );
+        }
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -58,6 +106,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             });
           },
         ),
+        // 🌟 LOGOUT BUTTON APPBAR MEIN ADD KIYA 🌟
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout, color: Colors.redAccent),
+            tooltip: 'Logout',
+            onPressed: _handleLogout,
+          ),
+          const SizedBox(width: 10),
+        ],
       ),
       body: Row(
         children: <Widget>[
@@ -86,7 +143,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   selectedIcon: Icon(Icons.edit_document),
                   label: Text('Manage Match'),
                 ),
-                // 🌟 NAYA MENU OPTION YAHAN ADD KIYA HAI 🌟
                 NavigationRailDestination(
                   icon: Icon(Icons.fact_check_outlined),
                   selectedIcon: Icon(Icons.fact_check),
@@ -111,6 +167,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   icon: Icon(Icons.group_outlined),
                   selectedIcon: Icon(Icons.group),
                   label: Text('Users'),
+                ),
+                NavigationRailDestination(
+                  icon: Icon(Icons.admin_panel_settings_outlined),
+                  selectedIcon: Icon(Icons.admin_panel_settings),
+                  label: Text('Host Approvals'),
                 ),
                 NavigationRailDestination(
                   icon: Icon(Icons.settings_outlined),
